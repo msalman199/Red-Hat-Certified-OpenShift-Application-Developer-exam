@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: advanced-config-app
+  labels:
+    app: advanced-config
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: advanced-config
+  template:
+    metadata:
+      labels:
+        app: advanced-config
+    spec:
+      containers:
+      - name: app-container
+        image: registry.access.redhat.com/ubi8/ubi:latest
+        command: ["/bin/bash"]
+        args: ["-c", "while true; do echo 'Advanced app running...'; sleep 30; done"]
+        envFrom:
+        # Import all keys from ConfigMap as environment variables
+        - configMapRef:
+            name: app-config
+        # Import all keys from Secret as environment variables
+        - secretRef:
+            name: database-credentials
+        env:
+        # Override or add specific environment variables
+        - name: CUSTOM_MESSAGE
+          value: "Hello from Advanced Config App"
