@@ -1,0 +1,495 @@
+Time Spent Today:
+1h 44m
+
+Start Lab
+Connect
+Delete Lab
+SSH Access
+
+Video
+Lab Material
+Lab 6: Containerizing Applications with Dockerfiles
+Objectives
+By the end of this lab, you will be able to:
+
+Understand the fundamentals of containerization using Docker
+Write effective Dockerfiles for different types of applications
+Build and test container images locally using Docker commands
+Push container images to OpenShift's internal registry
+Implement best practices for container image creation
+Troubleshoot common containerization issues
+Prerequisites
+Before starting this lab, you should have:
+
+Basic understanding of Linux command line operations
+Familiarity with text editors (vi, nano, or similar)
+Basic knowledge of web applications and HTTP protocols
+Understanding of OpenShift concepts from previous labs
+Access to an OpenShift cluster with developer permissions
+Lab Environment Setup
+Ready-to-Use Cloud Machines: Al Nafi provides pre-configured Linux-based cloud machines with all necessary tools installed. Simply click Start Lab to access your environment - no need to build your own VM or install additional software.
+
+Your lab environment includes:
+
+Red Hat Enterprise Linux 8 or CentOS Stream
+Docker/Podman container runtime
+OpenShift CLI (oc) tools
+Text editors and development tools
+Sample application code
+Task 1: Write a Dockerfile for a Sample Application
+Subtask 1.1: Create the Sample Application
+First, let's create a simple Node.js web application that we'll containerize.
+
+Create a project directory:
+mkdir ~/containerization-lab
+cd ~/containerization-lab
+Create the main application file:
+cat > app.js << 'EOF'
+const express = require('express');
+const app = express();
+const port = 8080;
+
+// Middleware to parse JSON
+app.use(express.json());
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+    res.status(200).json({
+        status: 'healthy',
+        timestamp: new Date().toISOString(),
+        version: '1.0.0'
+    });
+});
+
+// Main application endpoint
+app.get('/', (req, res) => {
+    res.json({
+        message: 'Welcome to the Containerized Application!',
+        environment: process.env.NODE_ENV || 'development',
+        hostname: require('os').hostname()
+    });
+});
+
+// API endpoint for demonstration
+app.get('/api/info', (req, res) => {
+    res.json({
+        application: 'Sample Containerized App',
+        version: '1.0.0',
+        author: 'OpenShift Developer',
+        description: 'A simple Node.js application for containerization demonstration'
+    });
+});
+
+app.listen(port, '0.0.0.0', () => {
+    console.log(`Application running on port ${port}`);
+    console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+});
+EOF
+Create the package.json file:
+cat > package.json << 'EOF'
+{
+  "name": "containerized-sample-app",
+  "version": "1.0.0",
+  "description": "Sample application for containerization lab",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "dev": "NODE_ENV=development node app.js",
+    "prod": "NODE_ENV=production node app.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  },
+  "keywords": ["nodejs", "express", "containerization", "openshift"],
+  "author": "OpenShift Developer",
+  "license": "MIT"
+}
+EOF
+Subtask 1.2: Write the Dockerfile
+Now let's create a comprehensive Dockerfile that follows best practices.
+
+Create the main Dockerfile:
+cat > Dockerfile << 'EOF'
+# Use the official Node.js runtime as the base image
+# Using specific version for reproducibility
+FROM node:18-alpine
+
+# Set metadata labels for better image management
+LABEL maintainer="openshift-developer@example.com"
+LABEL version="1.0.0"
+LABEL description="Sample containerized Node.js application"
+
+# Create a non-root user for security
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S nodejs -u 1001
+
+# Set the working directory inside the container
+WORKDIR /usr/src/app
+
+# Copy package files first for better layer caching
+COPY package*.json ./
+
+# Install dependencies
+RUN npm ci --only=production && \
+    npm cache clean --force
+
+# Copy application source code
+COPY --chown=nodejs:nodejs . .
+
+# Create necessary directories and set permissions
+RUN mkdir -p /usr/src/app/logs && \
+    chown -R nodejs:nodejs /usr/src/app
+
+# Switch to non-root user
+USER nodejs
+
+# Expose the application port
+EXPOSE 8080
+
+# Add health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+# Set environment variables
+ENV NODE_ENV=production
+ENV PORT=8080
+
+# Define the command to run the application
+CMD ["npm", "start"]
+EOF
+Create a .dockerignore file to exclude unnecessary files:
+cat > .dockerignore << 'EOF'
+node_modules
+npm-debug.log
+.git
+.gitignore
+README.md
+.env
+.nyc_output
+coverage
+.DS_Store
+*.log
+.vscode
+.idea
+EOF
+Subtask 1.3: Create Additional Dockerfile Variants
+Let's create alternative Dockerfiles to demonstrate different approaches.
+
+Create a multi-stage Dockerfile:
+cat > Dockerfile.multistage << 'EOF'
+# Multi-stage build for optimized production image
+# Stage 1: Build stage
+FROM node:18-alpine AS builder
+
+WORKDIR /usr/src/app
+
+# Copy package files
+COPY package*.json ./
+
+# Install all dependencies (including dev dependencies)
+RUN npm ci
+
+# Copy source code
+COPY . .
+
+# Run any build processes (if needed)
+# RUN npm run build
+
+# Stage 2: Production stage
+FROM node:18-alpine AS production
+
+LABEL maintainer="openshift-developer@example.com"
+LABEL version="1.0.0"
+LABEL description="Multi-stage containerized Node.js application"
+
+# Create non-root user
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S nodejs -u 1001
+
+WORKDIR /usr/src/app
+
+# Copy package files
+COPY package*.json ./
+
+# Install only production dependencies
+RUN npm ci --only=production && \
+    npm cache clean --force
+
+# Copy application from builder stage
+COPY --from=builder --chown=nodejs:nodejs /usr/src/app/app.js ./
+COPY --from=builder --chown=nodejs:nodejs /usr/src/app/package.json ./
+
+# Switch to non-root user
+USER nodejs
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
+
+ENV NODE_ENV=production
+
+CMD ["npm", "start"]
+EOF
+Task 2: Build and Test Container Images Locally
+Subtask 2.1: Build the Container Image
+Build the main Docker image:
+# Build the image with a descriptive tag
+docker build -t sample-app:v1.0.0 .
+
+# Verify the build was successful
+docker images | grep sample-app
+Build the multi-stage image:
+# Build using the multi-stage Dockerfile
+docker build -f Dockerfile.multistage -t sample-app:v1.0.0-multistage .
+
+# Compare image sizes
+docker images | grep sample-app
+Inspect the built images:
+# Get detailed information about the image
+docker inspect sample-app:v1.0.0
+
+# View image layers and history
+docker history sample-app:v1.0.0
+Subtask 2.2: Test the Container Locally
+Run the container in detached mode:
+# Run the container with port mapping
+docker run -d --name sample-app-test -p 8080:8080 sample-app:v1.0.0
+
+# Verify the container is running
+docker ps
+Test the application endpoints:
+# Test the main endpoint
+curl http://localhost:8080
+
+# Test the health check endpoint
+curl http://localhost:8080/health
+
+# Test the API endpoint
+curl http://localhost:8080/api/info
+Check container logs:
+# View container logs
+docker logs sample-app-test
+
+# Follow logs in real-time
+docker logs -f sample-app-test
+Execute commands inside the running container:
+# Access the container shell
+docker exec -it sample-app-test /bin/sh
+
+# Inside the container, check the application files
+ls -la /usr/src/app
+ps aux
+exit
+Subtask 2.3: Test Container Health and Performance
+Monitor container resource usage:
+# Check container resource usage
+docker stats sample-app-test --no-stream
+
+# Get detailed container information
+docker inspect sample-app-test | grep -A 10 "State"
+Test container restart behavior:
+# Stop the container
+docker stop sample-app-test
+
+# Start it again
+docker start sample-app-test
+
+# Verify it's running
+curl http://localhost:8080/health
+Clean up the test container:
+# Stop and remove the test container
+docker stop sample-app-test
+docker rm sample-app-test
+Task 3: Push the Image to OpenShift's Internal Registry
+Subtask 3.1: Prepare OpenShift Environment
+Login to your OpenShift cluster:
+# Login using your credentials
+oc login --server=https://your-openshift-cluster:6443
+
+# Create a new project for this lab
+oc new-project containerization-lab
+
+# Verify you're in the correct project
+oc project
+Enable the internal registry route (if not already enabled):
+# Check if the registry route exists
+oc get route -n openshift-image-registry
+
+# If no route exists, create one (requires cluster-admin privileges)
+# oc patch configs.imageregistry.operator.openshift.io/cluster --patch '{"spec":{"defaultRoute":true}}' --type=merge
+Get the internal registry URL:
+# Get the registry route
+REGISTRY_URL=$(oc get route default-route -n openshift-image-registry -o jsonpath='{.spec.host}')
+echo "Registry URL: $REGISTRY_URL"
+
+# Alternative method if route doesn't exist
+# Use the internal service
+REGISTRY_URL="image-registry.openshift-image-registry.svc:5000"
+echo "Internal Registry URL: $REGISTRY_URL"
+Subtask 3.2: Tag and Push the Image
+Tag the image for the OpenShift registry:
+# Get your current project name
+PROJECT_NAME=$(oc project -q)
+
+# Tag the image for the internal registry
+docker tag sample-app:v1.0.0 $REGISTRY_URL/$PROJECT_NAME/sample-app:v1.0.0
+
+# Also create a 'latest' tag
+docker tag sample-app:v1.0.0 $REGISTRY_URL/$PROJECT_NAME/sample-app:latest
+
+# Verify the tags
+docker images | grep sample-app
+Login to the OpenShift registry:
+# Get your OpenShift token
+TOKEN=$(oc whoami -t)
+
+# Login to the registry using Docker
+echo $TOKEN | docker login -u $(oc whoami) --password-stdin $REGISTRY_URL
+Push the image to the registry:
+# Push the versioned image
+docker push $REGISTRY_URL/$PROJECT_NAME/sample-app:v1.0.0
+
+# Push the latest tag
+docker push $REGISTRY_URL/$PROJECT_NAME/sample-app:latest
+Subtask 3.3: Verify the Image in OpenShift
+Check the image stream in OpenShift:
+# List image streams in your project
+oc get imagestreams
+
+# Get detailed information about your image stream
+oc describe imagestream sample-app
+
+# View image stream tags
+oc get imagestreamtags
+Create a deployment using the pushed image:
+# Create a new application from the image
+oc new-app --image-stream=sample-app:latest --name=sample-app-deployment
+
+# Check the deployment status
+oc get deployments
+
+# Check the pods
+oc get pods
+Expose the application:
+# Create a service (if not automatically created)
+oc expose deployment sample-app-deployment --port=8080
+
+# Create a route to access the application externally
+oc expose service sample-app-deployment
+
+# Get the route URL
+oc get routes
+Test the deployed application:
+# Get the application URL
+APP_URL=$(oc get route sample-app-deployment -o jsonpath='{.spec.host}')
+
+# Test the application
+curl http://$APP_URL
+curl http://$APP_URL/health
+curl http://$APP_URL/api/info
+Subtask 3.4: Advanced Image Management
+Create additional image tags:
+# Tag the image with additional metadata
+oc tag sample-app:latest sample-app:stable
+oc tag sample-app:latest sample-app:$(date +%Y%m%d)
+
+# View all tags
+oc get imagestreamtags
+Set up image change triggers:
+# Check current triggers
+oc describe deployment sample-app-deployment | grep -A 5 "Triggers"
+
+# The deployment should automatically update when the image changes
+# Let's verify by pushing a new version
+Build and push an updated version:
+# Make a small change to the application
+sed -i 's/version: '\''1.0.0'\''/version: '\''1.1.0'\''/g' app.js
+
+# Rebuild the image
+docker build -t sample-app:v1.1.0 .
+
+# Tag for registry
+docker tag sample-app:v1.1.0 $REGISTRY_URL/$PROJECT_NAME/sample-app:v1.1.0
+docker tag sample-app:v1.1.0 $REGISTRY_URL/$PROJECT_NAME/sample-app:latest
+
+# Push the updated image
+docker push $REGISTRY_URL/$PROJECT_NAME/sample-app:v1.1.0
+docker push $REGISTRY_URL/$PROJECT_NAME/sample-app:latest
+
+# Watch the deployment update
+oc get pods -w
+Troubleshooting Common Issues
+Docker Build Issues
+Problem: Build fails with permission errors
+
+# Solution: Check file permissions and ownership
+ls -la
+chmod +r package.json app.js
+Problem: npm install fails in container
+
+# Solution: Clear npm cache and use specific npm version
+RUN npm cache clean --force
+RUN npm ci --only=production
+Registry Push Issues
+Problem: Authentication failed when pushing to registry
+
+# Solution: Re-authenticate and check token
+oc whoami -t
+docker logout $REGISTRY_URL
+echo $(oc whoami -t) | docker login -u $(oc whoami) --password-stdin $REGISTRY_URL
+Problem: Image push is slow or fails
+
+# Solution: Check network connectivity and registry status
+oc get pods -n openshift-image-registry
+curl -k https://$REGISTRY_URL/v2/
+Application Deployment Issues
+Problem: Pod fails to start
+
+# Solution: Check pod logs and events
+oc logs deployment/sample-app-deployment
+oc describe pod <pod-name>
+oc get events --sort-by=.metadata.creationTimestamp
+Problem: Application not accessible via route
+
+# Solution: Check service and route configuration
+oc get svc
+oc get routes
+oc describe route sample-app-deployment
+Best Practices Summary
+Dockerfile Best Practices
+Use specific base image tags instead of 'latest'
+Run as non-root user for security
+Use multi-stage builds to reduce image size
+Leverage layer caching by copying package files first
+Include health checks for better container management
+Set appropriate labels for image metadata
+Security Considerations
+Scan images for vulnerabilities before deployment
+Use minimal base images (Alpine Linux)
+Don't include secrets in images
+Keep images updated with security patches
+Performance Optimization
+Minimize image layers by combining RUN commands
+Use .dockerignore to exclude unnecessary files
+Clean up package managers after installation
+Use appropriate resource limits in OpenShift
+Conclusion
+In this comprehensive lab, you have successfully:
+
+Created a sample Node.js application with proper structure and endpoints
+Written effective Dockerfiles using industry best practices including security measures, multi-stage builds, and health checks
+Built and tested container images locally using Docker commands and verified functionality
+Pushed images to OpenShift's internal registry and managed image streams and tags
+Deployed containerized applications in OpenShift and exposed them via routes
+Implemented advanced image management techniques including versioning and automated deployments
+Why This Matters: Containerization is fundamental to modern application development and deployment. The skills you've learned enable you to:
+
+Package applications consistently across different environments
+Improve application portability and scalability
+Implement DevOps best practices for continuous integration and deployment
+Enhance security through proper container configuration
+Optimize resource utilization in cloud environments
+These containerization skills are essential for the Red Hat Certified OpenShift Application Developer exam and are directly applicable to real-world enterprise application development scenarios. You now have the foundation to containerize complex applications and manage them effectively in OpenShift environments.
+
+The techniques learned in this lab form the basis for advanced topics such as container orchestration, microservices architecture, and cloud-native application development patterns.
