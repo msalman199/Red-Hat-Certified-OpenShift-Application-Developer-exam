@@ -1,0 +1,25 @@
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: nodejs-debug-build
+  labels:
+    app: nodejs-debug
+spec:
+  source:
+    type: Git
+    git:
+      uri: https://github.com/invalid-repo/does-not-exist.git
+      ref: master
+  strategy:
+    type: Source
+    sourceStrategy:
+      from:
+        kind: ImageStreamTag
+        namespace: openshift
+        name: nodejs:16-ubi8
+  output:
+    to:
+      kind: ImageStreamTag
+      name: nodejs-debug:latest
+  triggers:
+  - type: ConfigChange

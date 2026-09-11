@@ -1,0 +1,30 @@
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: nodejs-secure-build
+  labels:
+    app: nodejs-secure
+spec:
+  source:
+    type: Git
+    git:
+      uri: https://github.com/sclorg/nodejs-ex.git
+      ref: master
+  strategy:
+    type: Source
+    sourceStrategy:
+      from:
+        kind: ImageStreamTag
+        namespace: openshift
+        name: nodejs:16-ubi8
+  output:
+    to:
+      kind: ImageStreamTag
+      name: nodejs-secure:latest
+  triggers:
+  - type: ConfigChange
+  - type: Generic
+    generic:
+      secretReference:
+        name: webhook-secret
+      allowEnv: true
