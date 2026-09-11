@@ -8,10 +8,11 @@ app.use(express.json());
 // Root route
 app.get('/', (req, res) => {
     res.json({
-        message: 'Welcome to S2I Node.js Application!',
-        version: '1.0.0',
+        message: 'Welcome to S2I Node.js Application - Updated Version!',
+        version: '2.0.0',
         timestamp: new Date().toISOString(),
-        environment: process.env.NODE_ENV || 'development'
+        environment: process.env.NODE_ENV || 'development',
+        update: 'Added new features and improved performance'
     });
 });
 
