@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jenkins-demo-app
+  labels:
+    app: jenkins-demo-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: jenkins-demo-app
+  template:
+    metadata:
+      labels:
+        app: jenkins-demo-app
+    spec:
+      containers:
+      - name: jenkins-demo-app
+        image: jenkins-demo-app:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: PORT
+          value: "8080"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jenkins-demo-app-service
+spec:
+  selector:
+    app: jenkins-demo-app
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 8080
+  type: ClusterIP
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: jenkins-demo-app-route
+spec:
+  to:
+    kind: Service
+    name: jenkins-demo-app-service
+  port:
+    targetPort: 8080
