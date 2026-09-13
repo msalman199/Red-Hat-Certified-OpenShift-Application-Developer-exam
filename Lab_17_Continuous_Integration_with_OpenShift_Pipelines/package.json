@@ -1,0 +1,13 @@
+{
+  "name": "sample-node-app",
+  "version": "1.0.0",
+  "description": "A sample Node.js application for CI/CD demo",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "echo 'Running tests...' && exit 0"
+  },
+  "dependencies": {
+    "express": "^4.18.0"
+  }
+}
