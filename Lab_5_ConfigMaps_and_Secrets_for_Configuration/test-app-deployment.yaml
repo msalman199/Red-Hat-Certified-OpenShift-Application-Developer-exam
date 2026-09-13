@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: config-test-app
+  labels:
+    app: config-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: config-test
+  template:
+    metadata:
+      labels:
+        app: config-test
+    spec:
+      containers:
+      - name: app-container
+        image: registry.access.redhat.com/ubi8/ubi:latest
+        command: ["/bin/bash"]
+        args: ["-c", "while true; do echo 'App running...'; sleep 30; done"]
+        env:
+        # Environment variables from ConfigMap
+        - name: DATABASE_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: database_host
+        - name: DATABASE_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: database_port
+        - name: APP_MODE
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: app_mode
+        # Environment variables from Secret
+        - name: DB_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: database-credentials
+              key: username
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: database-credentials
+              key: password
+        - name: API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-keys
+              key: api-key
+        volumeMounts:
+        # Mount ConfigMap as volume
+        - name: app-properties-volume
+          mountPath: /etc/config
+          readOnly: true
+        # Mount Secret as volume
+        - name: tls-certs-volume
+          mountPath: /etc/ssl/certs
+          readOnly: true
+      volumes:
+      # ConfigMap volume
+      - name: app-properties-volume
+        configMap:
+          name: app-properties
+      # Secret volume
+      - name: tls-certs-volume
+        secret:
+          secretName: web-tls-secret

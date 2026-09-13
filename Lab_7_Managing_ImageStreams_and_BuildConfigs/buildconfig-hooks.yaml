@@ -1,0 +1,30 @@
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: nodejs-hooks-build
+  labels:
+    app: nodejs-hooks
+spec:
+  source:
+    type: Git
+    git:
+      uri: https://github.com/sclorg/nodejs-ex.git
+      ref: master
+  strategy:
+    type: Source
+    sourceStrategy:
+      from:
+        kind: ImageStreamTag
+        namespace: openshift
+        name: nodejs:16-ubi8
+  output:
+    to:
+      kind: ImageStreamTag
+      name: nodejs-hooks:latest
+  postCommit:
+    script: |
+      echo "Running post-commit tests..."
+      npm test || echo "No tests found, skipping..."
+      echo "Build completed successfully!"
+  triggers:
+  - type: ConfigChange

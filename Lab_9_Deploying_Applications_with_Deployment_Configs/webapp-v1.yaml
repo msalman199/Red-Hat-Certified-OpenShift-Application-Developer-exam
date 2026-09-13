@@ -1,0 +1,41 @@
+apiVersion: apps.openshift.io/v1
+kind: DeploymentConfig
+metadata:
+  name: webapp
+  labels:
+    app: webapp
+spec:
+  replicas: 3
+  selector:
+    app: webapp
+  template:
+    metadata:
+      labels:
+        app: webapp
+        version: v1
+    spec:
+      containers:
+      - name: webapp
+        image: httpd:2.4
+        ports:
+        - containerPort: 80
+        env:
+        - name: APP_VERSION
+          value: "v1.0"
+        volumeMounts:
+        - name: html-content
+          mountPath: /usr/local/apache2/htdocs
+      volumes:
+      - name: html-content
+        configMap:
+          name: webapp-content
+  triggers:
+  - type: ConfigChange
+  strategy:
+    type: Rolling
+    rollingParams:
+      updatePeriodSeconds: 2
+      intervalSeconds: 1
+      timeoutSeconds: 600
+      maxUnavailable: 1
+      maxSurge: 1

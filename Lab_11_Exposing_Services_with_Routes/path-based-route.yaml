@@ -1,0 +1,29 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: multi-app-route
+  namespace: route-lab
+spec:
+  host: multi-app.apps.cluster.local
+  path: /app1
+  to:
+    kind: Service
+    name: webapp1
+    weight: 100
+  port:
+    targetPort: 8080
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: multi-app-route-2
+  namespace: route-lab
+spec:
+  host: multi-app.apps.cluster.local
+  path: /app2
+  to:
+    kind: Service
+    name: webapp2
+    weight: 100
+  port:
+    targetPort: 8080

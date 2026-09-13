@@ -1,0 +1,34 @@
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: nodejs-env-build
+  labels:
+    app: nodejs-env
+spec:
+  source:
+    type: Git
+    git:
+      uri: https://github.com/sclorg/nodejs-ex.git
+      ref: master
+  strategy:
+    type: Source
+    sourceStrategy:
+      from:
+        kind: ImageStreamTag
+        namespace: openshift
+        name: nodejs:16-ubi8
+      env:
+      - name: BUILD_ENV
+        value: "development"
+      - name: BUILD_VERSION
+        value: "1.0.0"
+  output:
+    to:
+      kind: ImageStreamTag
+      name: nodejs-env:latest
+  triggers:
+  - type: ConfigChange
+  - type: Generic
+    generic:
+      secret: "env-webhook-secret"
+      allowEnv: true

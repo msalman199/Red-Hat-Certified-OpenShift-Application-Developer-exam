@@ -1,0 +1,39 @@
+apiVersion: apps.openshift.io/v1
+kind: DeploymentConfig
+metadata:
+  name: webapp-hooks
+spec:
+  replicas: 2
+  selector:
+    app: webapp-hooks
+  template:
+    metadata:
+      labels:
+        app: webapp-hooks
+    spec:
+      containers:
+      - name: webapp
+        image: httpd:2.4
+        ports:
+        - containerPort: 80
+  triggers:
+  - type: ConfigChange
+  strategy:
+    type: Rolling
+    rollingParams:
+      pre:
+        failurePolicy: Abort
+        execNewPod:
+          command:
+          - /bin/sh
+          - -c
+          - echo "Pre-deployment hook executed at $(date)"
+          containerName: webapp
+      post:
+        failurePolicy: Ignore
+        execNewPod:
+          command:
+          - /bin/sh
+          - -c
+          - echo "Post-deployment hook executed at $(date)"
+          containerName: webapp

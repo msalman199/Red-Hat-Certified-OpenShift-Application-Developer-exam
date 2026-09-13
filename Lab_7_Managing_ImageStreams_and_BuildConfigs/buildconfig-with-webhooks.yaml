@@ -1,0 +1,38 @@
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: nodejs-webhook-build
+  labels:
+    app: nodejs-webhook
+spec:
+  source:
+    type: Git
+    git:
+      uri: https://github.com/sclorg/nodejs-ex.git
+      ref: master
+  strategy:
+    type: Source
+    sourceStrategy:
+      from:
+        kind: ImageStreamTag
+        namespace: openshift
+        name: nodejs:16-ubi8
+  output:
+    to:
+      kind: ImageStreamTag
+      name: nodejs-webhook:latest
+  triggers:
+  - type: ConfigChange
+  - type: ImageChange
+    imageChange:
+      from:
+        kind: ImageStreamTag
+        namespace: openshift
+        name: nodejs:16-ubi8
+  - type: Generic
+    generic:
+      secret: "my-generic-secret"
+      allowEnv: true
+  - type: GitHub
+    github:
+      secret: "my-github-secret"
