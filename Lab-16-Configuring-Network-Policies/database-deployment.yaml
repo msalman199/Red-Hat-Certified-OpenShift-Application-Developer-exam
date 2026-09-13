@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: database
+  namespace: netpol-lab
+  labels:
+    app: database
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: database
+  template:
+    metadata:
+      labels:
+        app: database
+        tier: database
+    spec:
+      containers:
+      - name: database
+        image: nginx:1.21
+        ports:
+        - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: database-service
+  namespace: netpol-lab
+spec:
+  selector:
+    app: database
+  ports:
+  - port: 80
+    targetPort: 80
+  type: ClusterIP

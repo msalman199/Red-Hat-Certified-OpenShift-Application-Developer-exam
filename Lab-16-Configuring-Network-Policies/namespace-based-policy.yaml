@@ -1,0 +1,23 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: namespace-based-access
+  namespace: netpol-lab
+spec:
+  podSelector:
+    matchLabels:
+      app: frontend
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          access: allowed
+    ports:
+    - protocol: TCP
+      port: 80
+  - from: []
+    ports:
+    - protocol: TCP
+      port: 80
