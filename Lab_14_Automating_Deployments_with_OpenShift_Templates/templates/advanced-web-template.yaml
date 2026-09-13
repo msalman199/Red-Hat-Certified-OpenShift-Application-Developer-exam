@@ -1,0 +1,160 @@
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: advanced-web-template
+  annotations:
+    description: "Advanced template with conditional objects"
+    tags: "web,application,advanced,template"
+objects:
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: ${APP_NAME}
+    labels:
+      app: ${APP_NAME}
+      environment: ${ENVIRONMENT}
+  spec:
+    replicas: ${{REPLICA_COUNT}}
+    selector:
+      matchLabels:
+        app: ${APP_NAME}
+    template:
+      metadata:
+        labels:
+          app: ${APP_NAME}
+          environment: ${ENVIRONMENT}
+      spec:
+        containers:
+        - name: ${APP_NAME}
+          image: ${IMAGE_NAME}:${IMAGE_TAG}
+          ports:
+          - containerPort: ${{CONTAINER_PORT}}
+          env:
+          - name: ENVIRONMENT
+            value: ${ENVIRONMENT}
+          resources:
+            requests:
+              memory: ${MEMORY_REQUEST}
+              cpu: ${CPU_REQUEST}
+            limits:
+              memory: ${MEMORY_LIMIT}
+              cpu: ${CPU_LIMIT}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: ${{CONTAINER_PORT}}
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: ${{CONTAINER_PORT}}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: ${APP_NAME}-service
+    labels:
+      app: ${APP_NAME}
+      environment: ${ENVIRONMENT}
+  spec:
+    selector:
+      app: ${APP_NAME}
+    ports:
+    - port: ${{SERVICE_PORT}}
+      targetPort: ${{CONTAINER_PORT}}
+      protocol: TCP
+- apiVersion: route.openshift.io/v1
+  kind: Route
+  metadata:
+    name: ${APP_NAME}-route
+    labels:
+      app: ${APP_NAME}
+      environment: ${ENVIRONMENT}
+  spec:
+    to:
+      kind: Service
+      name: ${APP_NAME}-service
+    port:
+      targetPort: ${{CONTAINER_PORT}}
+    tls:
+      termination: edge
+      insecureEdgeTerminationPolicy: Redirect
+- apiVersion: autoscaling/v2
+  kind: HorizontalPodAutoscaler
+  metadata:
+    name: ${APP_NAME}-hpa
+    labels:
+      app: ${APP_NAME}
+      environment: ${ENVIRONMENT}
+  spec:
+    scaleTargetRef:
+      apiVersion: apps/v1
+      kind: Deployment
+      name: ${APP_NAME}
+    minReplicas: ${{MIN_REPLICAS}}
+    maxReplicas: ${{MAX_REPLICAS}}
+    metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: ${{CPU_TARGET_PERCENTAGE}}
+parameters:
+- name: APP_NAME
+  description: "Name of the application"
+  required: true
+- name: ENVIRONMENT
+  description: "Deployment environment"
+  value: "development"
+  required: true
+- name: IMAGE_NAME
+  description: "Container image name"
+  value: "nginx"
+  required: true
+- name: IMAGE_TAG
+  description: "Container image tag"
+  value: "latest"
+  required: true
+- name: REPLICA_COUNT
+  description: "Number of replicas"
+  value: "1"
+  required: true
+- name: MIN_REPLICAS
+  description: "Minimum number of replicas for autoscaling"
+  value: "1"
+  required: true
+- name: MAX_REPLICAS
+  description: "Maximum number of replicas for autoscaling"
+  value: "5"
+  required: true
+- name: CPU_TARGET_PERCENTAGE
+  description: "Target CPU utilization percentage for autoscaling"
+  value: "70"
+  required: true
+- name: CONTAINER_PORT
+  description: "Container port"
+  value: "8080"
+  required: true
+- name: SERVICE_PORT
+  description: "Service port"
+  value: "80"
+  required: true
+- name: MEMORY_REQUEST
+  description: "Memory request"
+  value: "128Mi"
+  required: true
+- name: MEMORY_LIMIT
+  description: "Memory limit"
+  value: "256Mi"
+  required: true
+- name: CPU_REQUEST
+  description: "CPU request"
+  value: "100m"
+  required: true
+- name: CPU_LIMIT
+  description: "CPU limit"
+  value: "200m"
+  required: true
