@@ -1,0 +1,272 @@
+Lab 11: Exposing Services with Routes
+Objectives
+By the end of this lab, you will be able to:
+
+Create OpenShift routes to expose applications to external traffic
+Configure path-based routing for multiple services
+Implement load balancing strategies for exposed services
+Understand the relationship between services, routes, and external access
+Troubleshoot common routing issues in OpenShift
+Prerequisites
+Before starting this lab, you should have:
+
+Basic understanding of OpenShift concepts (pods, services, deployments)
+Familiarity with command-line interface operations
+Knowledge of HTTP protocols and web services
+Completion of previous OpenShift labs or equivalent experience
+Understanding of YAML configuration files
+Ready-to-Use Cloud Machines
+Al Nafi provides pre-configured Linux-based cloud machines with OpenShift already installed and configured. Simply click Start Lab to access your environment. No need to build your own VM or install OpenShift from scratch.
+
+Your lab environment includes:
+
+OpenShift cluster with administrative access
+Pre-installed oc command-line tool
+Sample applications ready for deployment
+All necessary networking components configured
+Task 1: Create OpenShift Routes to Expose Applications
+Subtask 1.1: Deploy Sample Applications
+First, let's create some sample applications that we can expose using routes.
+
+Create a new project for this lab:
+oc new-project route-lab
+Deploy a simple web application:
+oc new-app --name=webapp1 --docker-image=httpd:2.4 -l app=webapp1
+Deploy a second web application:
+oc new-app --name=webapp2 --docker-image=nginx:1.20 -l app=webapp2
+Verify the deployments are running:
+oc get pods
+Wait until both pods show Running status before proceeding.
+
+Subtask 1.2: Create Services for the Applications
+Expose the first application as a service:
+oc expose deployment webapp1 --port=8080 --target-port=80
+Expose the second application as a service:
+oc expose deployment webapp2 --port=8080 --target-port=80
+Verify services are created:
+oc get services
+You should see both webapp1 and webapp2 services listed.
+
+Subtask 1.3: Create Basic Routes
+Create a route for the first application:
+oc expose service webapp1
+Create a route for the second application:
+oc expose service webapp2
+View the created routes:
+oc get routes
+Get detailed information about the routes:
+oc describe route webapp1
+oc describe route webapp2
+Test external access to your applications:
+# Get the route URL for webapp1
+WEBAPP1_URL=$(oc get route webapp1 -o jsonpath='{.spec.host}')
+echo "WebApp1 URL: http://$WEBAPP1_URL"
+
+# Test the connection
+curl -I http://$WEBAPP1_URL
+Task 2: Set Up Path-Based Routing for Services
+Subtask 2.1: Create a Custom Route with Path-Based Routing
+Path-based routing allows you to serve multiple applications from a single hostname using different URL paths.
+
+Create a YAML file for path-based routing:
+cat > path-based-route.yaml << 'EOF'
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: multi-app-route
+  namespace: route-lab
+spec:
+  host: multi-app.apps.cluster.local
+  path: /app1
+  to:
+    kind: Service
+    name: webapp1
+    weight: 100
+  port:
+    targetPort: 8080
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: multi-app-route-2
+  namespace: route-lab
+spec:
+  host: multi-app.apps.cluster.local
+  path: /app2
+  to:
+    kind: Service
+    name: webapp2
+    weight: 100
+  port:
+    targetPort: 8080
+EOF
+Apply the path-based routes:
+oc apply -f path-based-route.yaml
+Verify the path-based routes:
+oc get routes
+Subtask 2.2: Create a Main Landing Page Route
+Deploy a simple landing page application:
+oc new-app --name=landing --docker-image=httpd:2.4 -l app=landing
+Expose the landing page service:
+oc expose deployment landing --port=8080 --target-port=80
+Create a route for the root path:
+cat > landing-route.yaml << 'EOF'
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: landing-route
+  namespace: route-lab
+spec:
+  host: multi-app.apps.cluster.local
+  to:
+    kind: Service
+    name: landing
+    weight: 100
+  port:
+    targetPort: 8080
+EOF
+Apply the landing page route:
+oc apply -f landing-route.yaml
+Subtask 2.3: Test Path-Based Routing
+Test the different paths:
+# Test the landing page (root path)
+curl -H "Host: multi-app.apps.cluster.local" http://$(oc get route landing-route -o jsonpath='{.spec.host}')
+
+# Test app1 path
+curl -H "Host: multi-app.apps.cluster.local" http://$(oc get route multi-app-route -o jsonpath='{.spec.host}')/app1
+
+# Test app2 path
+curl -H "Host: multi-app.apps.cluster.local" http://$(oc get route multi-app-route-2 -o jsonpath='{.spec.host}')/app2
+Task 3: Implement Load Balancing for Exposed Services
+Subtask 3.1: Scale Applications for Load Balancing
+Scale the first application to multiple replicas:
+oc scale deployment webapp1 --replicas=3
+Scale the second application to multiple replicas:
+oc scale deployment webapp2 --replicas=2
+Verify the scaling:
+oc get pods -l app=webapp1
+oc get pods -l app=webapp2
+Subtask 3.2: Configure Load Balancing Strategy
+Create a route with specific load balancing configuration:
+cat > load-balanced-route.yaml << 'EOF'
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: load-balanced-webapp
+  namespace: route-lab
+  annotations:
+    haproxy.router.openshift.io/balance: roundrobin
+    haproxy.router.openshift.io/disable_cookies: "true"
+spec:
+  to:
+    kind: Service
+    name: webapp1
+    weight: 100
+  port:
+    targetPort: 8080
+EOF
+Apply the load-balanced route:
+oc apply -f load-balanced-route.yaml
+View the route configuration:
+oc describe route load-balanced-webapp
+Subtask 3.3: Create Multi-Service Load Balancing
+Create a route that balances between multiple services:
+cat > multi-service-route.yaml << 'EOF'
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: multi-service-balance
+  namespace: route-lab
+  annotations:
+    haproxy.router.openshift.io/balance: roundrobin
+spec:
+  to:
+    kind: Service
+    name: webapp1
+    weight: 70
+  alternateBackends:
+  - kind: Service
+    name: webapp2
+    weight: 30
+  port:
+    targetPort: 8080
+EOF
+Apply the multi-service route:
+oc apply -f multi-service-route.yaml
+Test the load balancing:
+# Get the route URL
+BALANCE_URL=$(oc get route multi-service-balance -o jsonpath='{.spec.host}')
+
+# Make multiple requests to see load balancing in action
+for i in {1..10}; do
+  echo "Request $i:"
+  curl -s http://$BALANCE_URL | head -1
+  sleep 1
+done
+Subtask 3.4: Monitor Load Balancing Performance
+Check the router logs to see load balancing in action:
+# Find the router pod
+ROUTER_POD=$(oc get pods -n openshift-ingress -l ingresscontroller.operator.openshift.io/deployment-ingresscontroller=default -o jsonpath='{.items[0].metadata.name}')
+
+# View recent logs
+oc logs -n openshift-ingress $ROUTER_POD --tail=50
+Monitor service endpoints:
+oc get endpoints webapp1 webapp2
+Check route status and statistics:
+oc get routes -o wide
+Advanced Configuration and Troubleshooting
+Secure Routes with TLS
+Create a secure route with edge termination:
+cat > secure-route.yaml << 'EOF'
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: secure-webapp
+  namespace: route-lab
+spec:
+  to:
+    kind: Service
+    name: webapp1
+    weight: 100
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+EOF
+Apply the secure route:
+oc apply -f secure-route.yaml
+Test the secure route:
+SECURE_URL=$(oc get route secure-webapp -o jsonpath='{.spec.host}')
+curl -k https://$SECURE_URL
+Common Troubleshooting Commands
+Check route status:
+oc get routes
+oc describe route <route-name>
+Verify service endpoints:
+oc get endpoints
+Check pod connectivity:
+oc port-forward <pod-name> 8080:80
+View router configuration:
+oc get pods -n openshift-ingress
+oc logs -n openshift-ingress <router-pod-name>
+Cleanup
+To clean up the resources created in this lab:
+
+# Delete the project and all resources
+oc delete project route-lab
+
+# Or delete individual resources
+oc delete route --all
+oc delete service --all
+oc delete deployment --all
+Conclusion
+In this lab, you have successfully:
+
+Created OpenShift routes to expose internal services to external traffic, making your applications accessible from outside the cluster
+Implemented path-based routing to serve multiple applications from a single hostname using different URL paths, optimizing resource usage and simplifying DNS management
+Configured load balancing strategies to distribute traffic across multiple application instances, improving performance and reliability
+Explored advanced routing features including secure HTTPS routes and multi-service load balancing
+These skills are essential for Red Hat Certified OpenShift Application Developer certification and real-world OpenShift deployments. Routes are the primary mechanism for exposing applications in OpenShift, and understanding how to configure them properly ensures your applications are accessible, secure, and performant.
+
+The concepts you've learned here form the foundation for more advanced topics like service mesh, API gateways, and enterprise-grade application exposure strategies. Practice these techniques in different scenarios to build confidence in managing OpenShift application networking.
