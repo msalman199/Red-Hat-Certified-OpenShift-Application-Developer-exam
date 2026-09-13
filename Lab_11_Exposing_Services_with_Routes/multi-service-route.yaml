@@ -1,0 +1,18 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: multi-service-balance
+  namespace: route-lab
+  annotations:
+    haproxy.router.openshift.io/balance: roundrobin
+spec:
+  to:
+    kind: Service
+    name: webapp1
+    weight: 70
+  alternateBackends:
+  - kind: Service
+    name: webapp2
+    weight: 30
+  port:
+    targetPort: 8080

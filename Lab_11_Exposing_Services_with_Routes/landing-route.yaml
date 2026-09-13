@@ -1,0 +1,13 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: landing-route
+  namespace: route-lab
+spec:
+  host: multi-app.apps.cluster.local
+  to:
+    kind: Service
+    name: landing
+    weight: 100
+  port:
+    targetPort: 8080

@@ -1,0 +1,467 @@
+Lab 10: Application Scaling and Health Checks
+Objectives
+By the end of this lab, you will be able to:
+
+Implement horizontal pod autoscaling (HPA) for OpenShift applications
+Configure readiness and liveness probes to ensure application health
+Scale applications manually using OpenShift CLI and web console
+Set up automatic scaling based on resource utilization metrics
+Monitor application health and scaling behavior
+Troubleshoot common scaling and health check issues
+Prerequisites
+Before starting this lab, you should have:
+
+Basic knowledge of OpenShift/Kubernetes concepts (pods, deployments, services)
+Familiarity with OpenShift CLI (oc command)
+Understanding of YAML configuration files
+Basic Linux command line experience
+Completed previous OpenShift labs or equivalent experience
+Required Tools
+OpenShift CLI (oc) - pre-installed on your lab machine
+Web browser for accessing OpenShift web console
+Text editor (nano, vim, or VS Code)
+Lab Environment Setup
+Good News! Al Nafi provides you with ready-to-use Linux-based cloud machines with all necessary tools pre-installed. Simply click Start Lab to begin - no need to build your own VM or install software.
+
+Your lab environment includes:
+
+OpenShift cluster access
+Pre-configured user credentials
+Sample applications ready for deployment
+Monitoring tools and metrics server
+Task 1: Implement Horizontal Pod Autoscaling
+Subtask 1.1: Deploy a Sample Application
+First, let's deploy a sample web application that we can scale.
+
+Login to OpenShift cluster:
+oc login --server=https://your-openshift-cluster:6443 --username=developer --password=developer
+Create a new project:
+oc new-project scaling-lab
+Deploy a sample PHP application:
+oc new-app php:8.0~https://github.com/sclorg/cakephp-ex.git --name=cakephp-app
+Wait for the build to complete:
+oc get builds -w
+Expose the application:
+oc expose svc/cakephp-app
+Verify the deployment:
+oc get pods
+oc get routes
+Subtask 1.2: Configure Resource Requests and Limits
+Before implementing autoscaling, we need to set resource requests and limits.
+
+Create a resource configuration file:
+cat > app-resources.yaml << EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cakephp-app
+spec:
+  template:
+    spec:
+      containers:
+      - name: cakephp-app
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+EOF
+Apply the resource configuration:
+oc patch deployment cakephp-app --patch-file app-resources.yaml
+Verify the resource configuration:
+oc describe deployment cakephp-app | grep -A 10 "Limits\|Requests"
+Subtask 1.3: Create Horizontal Pod Autoscaler
+Create HPA configuration file:
+cat > hpa-config.yaml << EOF
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: cakephp-app-hpa
+  namespace: scaling-lab
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: cakephp-app
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+EOF
+Apply the HPA configuration:
+oc apply -f hpa-config.yaml
+Verify HPA creation:
+oc get hpa
+oc describe hpa cakephp-app-hpa
+Subtask 1.4: Test Autoscaling Behavior
+Monitor current pod count:
+oc get pods -l deployment=cakephp-app
+Generate load to trigger scaling:
+# Get the application route
+APP_ROUTE=$(oc get route cakephp-app -o jsonpath='{.spec.host}')
+
+# Generate load using a load testing pod
+oc run load-generator --image=busybox --restart=Never -- /bin/sh -c "while true; do wget -q -O- http://$APP_ROUTE; done"
+Monitor scaling in real-time:
+# In one terminal, watch HPA status
+watch oc get hpa
+
+# In another terminal, watch pod scaling
+watch oc get pods -l deployment=cakephp-app
+Check HPA events:
+oc describe hpa cakephp-app-hpa
+Clean up load generator:
+oc delete pod load-generator
+Task 2: Set Up Readiness and Liveness Probes
+Subtask 2.1: Configure Liveness Probe
+Liveness probes determine if a container is running properly and restart it if needed.
+
+Create liveness probe configuration:
+cat > liveness-probe.yaml << EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cakephp-app
+spec:
+  template:
+    spec:
+      containers:
+      - name: cakephp-app
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+          successThreshold: 1
+EOF
+Apply the liveness probe:
+oc patch deployment cakephp-app --patch-file liveness-probe.yaml
+Verify the probe configuration:
+oc describe deployment cakephp-app | grep -A 10 "Liveness"
+Subtask 2.2: Configure Readiness Probe
+Readiness probes determine if a container is ready to receive traffic.
+
+Create readiness probe configuration:
+cat > readiness-probe.yaml << EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cakephp-app
+spec:
+  template:
+    spec:
+      containers:
+      - name: cakephp-app
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+          successThreshold: 1
+EOF
+Apply the readiness probe:
+oc patch deployment cakephp-app --patch-file readiness-probe.yaml
+Verify both probes are configured:
+oc describe deployment cakephp-app | grep -A 15 "Liveness\|Readiness"
+Subtask 2.3: Create a Combined Health Check Configuration
+Create a comprehensive health check configuration:
+cat > health-checks.yaml << EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cakephp-app
+  namespace: scaling-lab
+spec:
+  template:
+    spec:
+      containers:
+      - name: cakephp-app
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+          successThreshold: 1
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+          successThreshold: 1
+        startupProbe:
+          httpGet:
+            path: /
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 30
+          successThreshold: 1
+EOF
+Apply the complete configuration:
+oc apply -f health-checks.yaml
+Monitor pod health status:
+oc get pods -w
+Subtask 2.4: Test Health Check Behavior
+Simulate application failure:
+# Get a pod name
+POD_NAME=$(oc get pods -l deployment=cakephp-app -o jsonpath='{.items[0].metadata.name}')
+
+# Simulate failure by stopping the web server process
+oc exec $POD_NAME -- pkill -f httpd
+Monitor pod restart behavior:
+oc get pods -w
+oc describe pod $POD_NAME
+Check events for health check failures:
+oc get events --sort-by='.lastTimestamp' | grep -i probe
+Task 3: Scale Applications Manually and Automatically
+Subtask 3.1: Manual Scaling Operations
+Scale up manually using CLI:
+oc scale deployment cakephp-app --replicas=5
+Verify scaling:
+oc get pods -l deployment=cakephp-app
+Scale down manually:
+oc scale deployment cakephp-app --replicas=2
+Scale using the web console:
+Open OpenShift web console in your browser
+Navigate to your project: scaling-lab
+Go to Workloads > Deployments
+Click on cakephp-app deployment
+Use the scale up/down arrows or edit the replica count
+Subtask 3.2: Configure Advanced Autoscaling
+Create advanced HPA with multiple metrics:
+cat > advanced-hpa.yaml << EOF
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: cakephp-app-advanced-hpa
+  namespace: scaling-lab
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: cakephp-app
+  minReplicas: 2
+  maxReplicas: 15
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 60
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 70
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 60
+      - type: Pods
+        value: 2
+        periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+EOF
+Replace the existing HPA:
+oc delete hpa cakephp-app-hpa
+oc apply -f advanced-hpa.yaml
+Monitor the new HPA:
+oc get hpa cakephp-app-advanced-hpa -w
+Subtask 3.3: Load Testing and Monitoring
+Create a more sophisticated load test:
+cat > load-test.yaml << EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: load-test
+  namespace: scaling-lab
+spec:
+  containers:
+  - name: load-test
+    image: busybox
+    command:
+    - /bin/sh
+    - -c
+    - |
+      APP_ROUTE="http://cakephp-app:8080"
+      echo "Starting load test against \$APP_ROUTE"
+      for i in \$(seq 1 1000); do
+        for j in \$(seq 1 10); do
+          wget -q -O- \$APP_ROUTE &
+        done
+        sleep 1
+        echo "Completed batch \$i"
+      done
+      echo "Load test completed"
+  restartPolicy: Never
+EOF
+Run the load test:
+oc apply -f load-test.yaml
+Monitor scaling behavior:
+# Terminal 1: Watch HPA
+watch oc get hpa
+
+# Terminal 2: Watch pods
+watch oc get pods
+
+# Terminal 3: Monitor resource usage
+oc top pods
+Check load test progress:
+oc logs load-test -f
+Subtask 3.4: Vertical Pod Autoscaling (VPA) Setup
+Create VPA configuration:
+cat > vpa-config.yaml << EOF
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: cakephp-app-vpa
+  namespace: scaling-lab
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: cakephp-app
+  updatePolicy:
+    updateMode: "Auto"
+  resourcePolicy:
+    containerPolicies:
+    - containerName: cakephp-app
+      maxAllowed:
+        cpu: 1
+        memory: 1Gi
+      minAllowed:
+        cpu: 50m
+        memory: 64Mi
+EOF
+Apply VPA configuration (Note: VPA may not be available in all clusters):
+oc apply -f vpa-config.yaml || echo "VPA not available in this cluster"
+Monitoring and Troubleshooting
+Common Issues and Solutions
+HPA not scaling:
+# Check metrics server
+oc get apiservice v1beta1.metrics.k8s.io -o yaml
+
+# Check resource requests are set
+oc describe deployment cakephp-app | grep -A 5 "Requests"
+
+# Check HPA status
+oc describe hpa cakephp-app-advanced-hpa
+Pods failing health checks:
+# Check pod events
+oc describe pod <pod-name>
+
+# Check application logs
+oc logs <pod-name>
+
+# Test health check endpoint manually
+oc port-forward <pod-name> 8080:8080
+curl http://localhost:8080/
+Resource constraints:
+# Check node resources
+oc describe nodes
+
+# Check resource quotas
+oc describe quota
+
+# Check limit ranges
+oc describe limitrange
+Monitoring Commands
+Real-time monitoring:
+# Watch all resources
+watch oc get pods,hpa,deployment
+
+# Monitor resource usage
+watch oc top pods
+
+# Check cluster events
+oc get events --sort-by='.lastTimestamp'
+Performance metrics:
+# Get detailed pod metrics
+oc adm top pods --containers
+
+# Get node metrics
+oc adm top nodes
+Cleanup
+Remove load test resources:
+oc delete pod load-test
+oc delete pod load-generator --ignore-not-found=true
+Clean up HPA and VPA:
+oc delete hpa cakephp-app-advanced-hpa
+oc delete vpa cakephp-app-vpa --ignore-not-found=true
+Optional: Delete the entire project:
+oc delete project scaling-lab
+Conclusion
+Congratulations! You have successfully completed Lab 10: Application Scaling and Health Checks. Here's what you accomplished:
+
+Key Achievements
+Implemented Horizontal Pod Autoscaling: You configured HPA to automatically scale your application based on CPU and memory utilization, ensuring optimal resource usage and application performance.
+
+Configured Health Checks: You set up liveness, readiness, and startup probes to ensure your applications are healthy and ready to serve traffic, improving overall reliability.
+
+Mastered Manual and Automatic Scaling: You learned how to scale applications both manually through CLI and web console, and automatically through HPA policies.
+
+Advanced Scaling Policies: You implemented sophisticated scaling behaviors with stabilization windows and multiple scaling policies for better control over scaling operations.
+
+Why This Matters
+Application Reliability: Health checks ensure that only healthy pods receive traffic, preventing users from experiencing downtime or errors.
+
+Resource Optimization: Autoscaling helps optimize resource usage by scaling up during high demand and scaling down during low demand, reducing costs.
+
+Performance Management: Proper scaling ensures your applications can handle varying loads while maintaining acceptable response times.
+
+Production Readiness: These skills are essential for running production applications in OpenShift/Kubernetes environments, making your applications more resilient and cost-effective.
+
+Next Steps
+Explore custom metrics for autoscaling using Prometheus
+Learn about cluster autoscaling for node-level scaling
+Investigate advanced deployment strategies like blue-green and canary deployments
+Study application performance monitoring and observability tools
+You now have the foundational knowledge to implement robust scaling and health checking strategies for your OpenShift applications, preparing you well for the Red Hat Certified OpenShift Application Developer exam and real-world application deployment scenarios.

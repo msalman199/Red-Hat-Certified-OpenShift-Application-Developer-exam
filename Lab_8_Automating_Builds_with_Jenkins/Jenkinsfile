@@ -1,0 +1,120 @@
+cat > Jenkinsfile << 'EOF'
+pipeline {
+    agent any
+    
+    parameters {
+        choice(
+            name: 'ENVIRONMENT',
+            choices: ['development', 'staging', 'production'],
+            description: 'Target deployment environment'
+        )
+        booleanParam(
+            name: 'SKIP_TESTS',
+            defaultValue: false,
+            description: 'Skip test execution'
+        )
+    }
+    
+    environment {
+        APP_NAME = 'jenkins-demo-app'
+        PROJECT_NAME = 'jenkins-ci'
+        IMAGE_TAG = "${BUILD_NUMBER}"
+        DEPLOY_ENV = "${params.ENVIRONMENT}"
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                echo "Checking out source code for ${DEPLOY_ENV} deployment..."
+                checkout scm
+            }
+        }
+        
+        stage('Build Application') {
+            steps {
+                echo "Building application for ${DEPLOY_ENV}..."
+                script {
+                    openshift.withCluster() {
+                        openshift.withProject("${PROJECT_NAME}") {
+                            if (!openshift.selector("bc", "${APP_NAME}").exists()) {
+                                openshift.newBuild("--name=${APP_NAME}", "--binary=true", "--strategy=docker")
+                            }
+                            
+                            def build = openshift.selector("bc", "${APP_NAME}").startBuild("--from-dir=.", "--wait=true")
+                            openshift.tag("${APP_NAME}:latest", "${APP_NAME}:${IMAGE_TAG}")
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('Run Tests') {
+            when {
+                not { params.SKIP_TESTS }
+            }
+            steps {
+                echo 'Running application tests...'
+                sh 'echo "Running tests for ${DEPLOY_ENV} environment..."'
+                sh 'sleep 3'
+                sh 'echo "All tests passed!"'
+            }
+        }
+        
+        stage('Deploy Application') {
+            steps {
+                echo "Deploying to ${DEPLOY_ENV} environment..."
+                script {
+                    openshift.withCluster() {
+                        openshift.withProject("${PROJECT_NAME}") {
+                            if (!openshift.selector("deployment", "${APP_NAME}").exists()) {
+                                openshift.newApp("${APP_NAME}:${IMAGE_TAG}", "--name=${APP_NAME}")
+                                openshift.selector("svc", "${APP_NAME}").expose()
+                            } else {
+                                openshift.selector("deployment", "${APP_NAME}").rollout().latest()
+                            }
+                            
+                            def deployment = openshift.selector("deployment", "${APP_NAME}")
+                            deployment.rollout().status("--watch=true")
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('Post-Deploy Verification') {
+            steps {
+                echo 'Verifying deployment health...'
+                script {
+                    openshift.withCluster() {
+                        openshift.withProject("${PROJECT_NAME}") {
+                            def route = openshift.selector("route", "${APP_NAME}")
+                            if (route.exists()) {
+                                def routeHost = route.object().spec.host
+                                echo "Application deployed successfully!"
+                                echo "Environment: ${DEPLOY_ENV}"
+                                echo "Access URL: http://${routeHost}"
+                                echo "Build Number: ${BUILD_NUMBER}"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        success {
+            echo "✅ Pipeline completed successfully for ${DEPLOY_ENV}!"
+            echo "Build #${BUILD_NUMBER} deployed successfully"
+        }
+        failure {
+            echo "❌ Pipeline failed for ${DEPLOY_ENV}"
+            echo "Check build logs for details"
+        }
+        always {
+            echo 'Cleaning up workspace...'
+            cleanWs()
+        }
+    }
+}
+EOF

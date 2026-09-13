@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: webapp-content
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Web Application v2</title>
+        <style>
+            body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }
+            .version { color: red; font-size: 24px; }
+            .container { background-color: #e0ffe0; padding: 20px; border-radius: 10px; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>Welcome to Our Updated Web Application</h1>
+            <p class="version">Version: 2.0</p>
+            <p>This is the updated version with new features!</p>
+            <p>Hostname: $(hostname)</p>
+        </div>
+    </body>
+    </html>
