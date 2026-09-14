@@ -1,0 +1,47 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: resource-sharing
+  labels:
+    app: resource-demo
+spec:
+  containers:
+  - name: cpu-intensive
+    image: busybox:1.35
+    command: ['sh', '-c']
+    args:
+    - |
+      echo "Starting CPU intensive task..."
+      while true; do
+        for i in {1..1000}; do
+          echo "CPU task iteration $i" > /dev/null
+        done
+        sleep 1
+      done
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "64Mi"
+      limits:
+        cpu: "200m"
+        memory: "128Mi"
+  - name: memory-monitor
+    image: busybox:1.35
+    command: ['sh', '-c']
+    args:
+    - |
+      while true; do
+        echo "=== Resource Usage at $(date) ==="
+        free -h
+        echo "=== Process List ==="
+        ps aux
+        echo "========================"
+        sleep 15
+      done
+    resources:
+      requests:
+        cpu: "50m"
+        memory: "32Mi"
+      limits:
+        cpu: "100m"
+        memory: "64Mi"

@@ -1,0 +1,63 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app-with-init
+  labels:
+    app: init-container-demo
+spec:
+  initContainers:
+  - name: init-database
+    image: busybox:1.35
+    command: ['sh', '-c']
+    args:
+    - |
+      echo "Initializing database..."
+      mkdir -p /data/db
+      echo "CREATE TABLE users (id INT, name VARCHAR(50));" > /data/db/init.sql
+      echo "INSERT INTO users VALUES (1, 'John Doe');" >> /data/db/init.sql
+      echo "Database initialization completed"
+    volumeMounts:
+    - name: app-data
+      mountPath: /data
+  - name: init-config
+    image: busybox:1.35
+    command: ['sh', '-c']
+    args:
+    - |
+      echo "Setting up configuration..."
+      mkdir -p /config
+      cat > /config/app.conf << EOF
+      server_port=8080
+      database_path=/data/db/init.sql
+      log_level=info
+      EOF
+      echo "Configuration setup completed"
+    volumeMounts:
+    - name: app-config
+      mountPath: /config
+  containers:
+  - name: main-app
+    image: busybox:1.35
+    command: ['sh', '-c']
+    args:
+    - |
+      echo "Starting main application..."
+      echo "Loading configuration from /config/app.conf"
+      cat /config/app.conf
+      echo "Loading database from /data/db/init.sql"
+      cat /data/db/init.sql
+      echo "Application started successfully"
+      while true; do
+        echo "Application running... $(date)"
+        sleep 30
+      done
+    volumeMounts:
+    - name: app-data
+      mountPath: /data
+    - name: app-config
+      mountPath: /config
+  volumes:
+  - name: app-data
+    emptyDir: {}
+  - name: app-config
+    emptyDir: {}

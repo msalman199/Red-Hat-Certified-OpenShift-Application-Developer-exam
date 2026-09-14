@@ -1,0 +1,65 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: communication-test
+  labels:
+    app: communication-demo
+spec:
+  containers:
+  - name: server
+    image: python:3.9-slim
+    command: ['python', '-c']
+    args:
+    - |
+      import http.server
+      import socketserver
+      import json
+      from datetime import datetime
+      
+      class CustomHandler(http.server.SimpleHTTPRequestHandler):
+          def do_GET(self):
+              self.send_response(200)
+              self.send_header('Content-type', 'application/json')
+              self.end_headers()
+              response = {
+                  'message': 'Hello from server container',
+                  'timestamp': datetime.now().isoformat(),
+                  'path': self.path
+              }
+              self.wfile.write(json.dumps(response).encode())
+      
+      with socketserver.TCPServer(("", 8080), CustomHandler) as httpd:
+          print("Server running on port 8080")
+          httpd.serve_forever()
+    ports:
+    - containerPort: 8080
+  - name: client
+    image: python:3.9-slim
+    command: ['python', '-c']
+    args:
+    - |
+      import time
+      import urllib.request
+      import json
+      
+      while True:
+          try:
+              with urllib.request.urlopen('http://localhost:8080/api/status') as response:
+                  data = json.loads(response.read().decode())
+                  print(f"Client received: {data}")
+          except Exception as e:
+              print(f"Client error: {e}")
+          time.sleep(10)
+  - name: monitor
+    image: busybox:1.35
+    command: ['sh', '-c']
+    args:
+    - |
+      while true; do
+        echo "=== Network Status at $(date) ==="
+        netstat -tuln 2>/dev/null || echo "netstat not available"
+        echo "=== Process Status ==="
+        ps aux
+        echo "========================"
+        sleep 30
+      done

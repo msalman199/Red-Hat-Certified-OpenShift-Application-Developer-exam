@@ -1,0 +1,66 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: web-app-with-sidecar
+  labels:
+    app: web-monitoring-demo
+spec:
+  containers:
+  - name: web-app
+    image: httpd:2.4
+    ports:
+    - containerPort: 80
+    volumeMounts:
+    - name: app-logs
+      mountPath: /usr/local/apache2/logs
+    - name: shared-data
+      mountPath: /usr/local/apache2/htdocs/data
+  - name: monitoring-sidecar
+    image: busybox:1.35
+    command: ['sh', '-c']
+    args:
+    - |
+      while true; do
+        # Generate monitoring data
+        echo "{\"timestamp\": \"$(date -Iseconds)\", \"status\": \"healthy\", \"requests\": $((RANDOM % 100))}" > /shared/metrics.json
+        
+        # Monitor log file size
+        if [ -f /logs/access_log ]; then
+          LOG_SIZE=$(wc -l < /logs/access_log)
+          echo "{\"timestamp\": \"$(date -Iseconds)\", \"log_lines\": $LOG_SIZE}" > /shared/log_stats.json
+        fi
+        
+        sleep 15
+      done
+    volumeMounts:
+    - name: app-logs
+      mountPath: /logs
+    - name: shared-data
+      mountPath: /shared
+  - name: log-shipper
+    image: busybox:1.35
+    command: ['sh', '-c']
+    args:
+    - |
+      while true; do
+        if [ -f /logs/access_log ]; then
+          echo "Shipping logs at $(date)"
+          tail -n 10 /logs/access_log > /shipped/latest_access.log
+        fi
+        if [ -f /logs/error_log ]; then
+          tail -n 5 /logs/error_log > /shipped/latest_errors.log
+        fi
+        sleep 20
+      done
+    volumeMounts:
+    - name: app-logs
+      mountPath: /logs
+    - name: shipped-logs
+      mountPath: /shipped
+  volumes:
+  - name: app-logs
+    emptyDir: {}
+  - name: shared-data
+    emptyDir: {}
+  - name: shipped-logs
+    emptyDir: {}

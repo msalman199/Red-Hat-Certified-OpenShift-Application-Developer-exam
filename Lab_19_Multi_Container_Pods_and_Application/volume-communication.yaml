@@ -1,0 +1,65 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: volume-communication
+  labels:
+    app: volume-comm-demo
+spec:
+  containers:
+  - name: producer
+    image: busybox:1.35
+    command: ['sh', '-c']
+    args:
+    - |
+      counter=1
+      while true; do
+        message="Message $counter from producer at $(date)"
+        echo "$message" >> /shared/messages.txt
+        echo "Produced: $message"
+        counter=$((counter + 1))
+        sleep 5
+      done
+    volumeMounts:
+    - name: shared-volume
+      mountPath: /shared
+  - name: consumer
+    image: busybox:1.35
+    command: ['sh', '-c']
+    args:
+    - |
+      last_line=0
+      while true; do
+        if [ -f /shared/messages.txt ]; then
+          current_lines=$(wc -l < /shared/messages.txt)
+          if [ $current_lines -gt $last_line ]; then
+            echo "=== New messages detected ==="
+            tail -n +$((last_line + 1)) /shared/messages.txt | while read line; do
+              echo "Consumed: $line"
+            done
+            last_line=$current_lines
+          fi
+        fi
+        sleep 3
+      done
+    volumeMounts:
+    - name: shared-volume
+      mountPath: /shared
+  - name: processor
+    image: busybox:1.35
+    command: ['sh', '-c']
+    args:
+    - |
+      while true; do
+        if [ -f /shared/messages.txt ]; then
+          message_count=$(wc -l < /shared/messages.txt)
+          echo "Processed $message_count total messages" > /shared/stats.txt
+          echo "Last processed at $(date)" >> /shared/stats.txt
+        fi
+        sleep 10
+      done
+    volumeMounts:
+    - name: shared-volume
+      mountPath: /shared
+  volumes:
+  - name: shared-volume
+    emptyDir: {}
