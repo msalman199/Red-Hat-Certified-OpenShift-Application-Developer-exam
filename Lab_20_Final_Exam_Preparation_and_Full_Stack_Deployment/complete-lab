@@ -1,0 +1,668 @@
+Lab 20: Final Exam Preparation and Full Stack Deployment
+Objectives
+By the end of this lab, students will be able to:
+
+Design and implement a complete OpenShift application workflow from development to production deployment
+Containerize a three-tier application (frontend, backend, database) using Podman and OpenShift best practices
+Configure persistent storage, database initialization, and service networking between application tiers
+Implement horizontal pod autoscaling, resource quotas, and limit ranges for production workloads
+Perform load testing and troubleshoot common OpenShift deployment issues
+Prerequisites
+Before starting this lab, students should have:
+
+Basic understanding of Linux command line operations
+Familiarity with containerization concepts (Docker/Podman)
+Knowledge of Kubernetes/OpenShift fundamentals (Deployments, Services, Routes)
+Understanding of Git version control
+Basic programming knowledge (Node.js)
+Completion of previous OpenShift labs or equivalent experience
+Ready-to-Use Cloud Machines: Al Nafi provides pre-configured Linux-based cloud machines with all necessary tools installed. Simply click Start Lab to access your environment. No need to build your own VM or install additional software.
+
+Your lab environment includes an OpenShift cluster with oc CLI access, Podman, Git, and Node.js pre-installed. Verify the following tools are available before continuing:
+
+oc version --client
+podman version
+node --version
+git --version
+If any command is missing, install it with:
+
+# RHEL/Fedora-based environments
+sudo dnf install -y podman git nodejs
+
+# The oc CLI, if not present, can be downloaded from your cluster's console
+# under "Command Line Tools" and extracted to /usr/local/bin
+Task 1: Build and Containerize the Full Stack Application
+Subtask 1.1: Create the Application Source Code
+Step 1: Log in to your OpenShift cluster and create a project.
+
+oc whoami
+oc cluster-info
+
+oc new-project fullstack-final --display-name="Full Stack Final Project"
+oc project fullstack-final
+Step 2: Create the application directory structure and backend source.
+
+mkdir -p ~/fullstack-app/backend ~/fullstack-app/frontend
+cd ~/fullstack-app/backend
+
+cat > package.json << 'EOF'
+{
+  "name": "fullstack-backend",
+  "version": "1.0.0",
+  "description": "Backend API for full stack demo",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "pg": "^8.8.0"
+  }
+}
+EOF
+
+cat > server.js << 'EOF'
+const express = require('express');
+const cors = require('cors');
+const { Pool } = require('pg');
+
+const app = express();
+const port = process.env.PORT || 3000;
+
+app.use(cors());
+app.use(express.json());
+
+const pool = new Pool({
+  host: process.env.DB_HOST || 'postgresql',
+  port: process.env.DB_PORT || 5432,
+  database: process.env.DB_NAME || 'fullstack_db',
+  user: process.env.DB_USER || 'postgres',
+  password: process.env.DB_PASSWORD || 'password'
+});
+
+app.get('/health', (req, res) => {
+  res.json({ status: 'healthy', timestamp: new Date().toISOString() });
+});
+
+app.get('/metrics', (req, res) => {
+  res.set('Content-Type', 'text/plain');
+  res.send(`# HELP app_uptime_seconds Application uptime in seconds\n# TYPE app_uptime_seconds gauge\napp_uptime_seconds ${process.uptime()}\n`);
+});
+
+app.get('/api/users', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM users ORDER BY id');
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Database error', details: err.message });
+  }
+});
+
+app.post('/api/users', async (req, res) => {
+  try {
+    const { name, email } = req.body;
+    if (!name || !email) {
+      return res.status(400).json({ error: 'name and email are required' });
+    }
+    const result = await pool.query(
+      'INSERT INTO users (name, email) VALUES ($1, $2) RETURNING *',
+      [name, email]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Database error', details: err.message });
+  }
+});
+
+app.listen(port, () => {
+  console.log(`Backend server running on port ${port}`);
+});
+EOF
+
+cat > Dockerfile << 'EOF'
+FROM node:18-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm install --production
+COPY . .
+EXPOSE 3000
+USER node
+CMD ["npm", "start"]
+EOF
+Step 3: Create the frontend source.
+
+cd ~/fullstack-app/frontend
+
+cat > index.html << 'EOF'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Full Stack OpenShift Demo</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        .container { max-width: 800px; margin: 0 auto; }
+        input, button { padding: 10px; margin: 5px; }
+        .user-item { padding: 10px; border: 1px solid #ddd; margin: 5px 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Full Stack OpenShift Application</h1>
+        <div>
+            <h2>Add New User</h2>
+            <input type="text" id="userName" placeholder="Name" />
+            <input type="email" id="userEmail" placeholder="Email" />
+            <button onclick="addUser()">Add User</button>
+        </div>
+        <div>
+            <h2>Users</h2>
+            <div id="usersList"></div>
+        </div>
+    </div>
+    <script>
+        const API_BASE = '/api';
+
+        async function loadUsers() {
+            const response = await fetch(`${API_BASE}/users`);
+            const users = await response.json();
+            document.getElementById('usersList').innerHTML = users.map(u =>
+                `<div class="user-item"><strong>${u.name}</strong> - ${u.email}</div>`
+            ).join('');
+        }
+
+        async function addUser() {
+            const name = document.getElementById('userName').value;
+            const email = document.getElementById('userEmail').value;
+            if (!name || !email) { alert('Please fill in both fields'); return; }
+            const response = await fetch(`${API_BASE}/users`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, email })
+            });
+            if (response.ok) {
+                document.getElementById('userName').value = '';
+                document.getElementById('userEmail').value = '';
+                loadUsers();
+            }
+        }
+
+        loadUsers();
+    </script>
+</body>
+</html>
+EOF
+
+cat > nginx.conf << 'EOF'
+events {
+    worker_connections 1024;
+}
+http {
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+    server {
+        listen 8080;
+        server_name localhost;
+        location / {
+            root /usr/share/nginx/html;
+            index index.html;
+        }
+        location /api/ {
+            proxy_pass http://backend-service:3000/api/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+        }
+    }
+}
+EOF
+
+cat > Dockerfile << 'EOF'
+FROM nginx:alpine
+COPY index.html /usr/share/nginx/html/
+COPY nginx.conf /etc/nginx/nginx.conf
+EXPOSE 8080
+CMD ["nginx", "-g", "daemon off;"]
+EOF
+Deliverable for Subtask 1.1: A local directory tree ~/fullstack-app with backend/ (containing package.json, server.js, Dockerfile) and frontend/ (containing index.html, nginx.conf, Dockerfile). Running find ~/fullstack-app -type f should list exactly these six files.
+
+Subtask 1.2: Build and Push Container Images
+Step 1: Build both images with Podman and log in to the OpenShift internal registry.
+
+cd ~/fullstack-app/backend
+podman build -t backend:latest .
+
+cd ~/fullstack-app/frontend
+podman build -t frontend:latest .
+
+# Expose the internal registry route for pushing (if not already exposed)
+oc get route default-route -n openshift-image-registry 2>/dev/null || \
+  oc patch configs.imageregistry.operator.openshift.io/cluster \
+    --patch '{"spec":{"defaultRoute":true}}' --type=merge
+
+REGISTRY=$(oc get route default-route -n openshift-image-registry -o jsonpath='{.spec.host}')
+echo "Registry: $REGISTRY"
+
+podman login -u $(oc whoami) -p $(oc whoami -t) $REGISTRY --tls-verify=false
+Step 2: Tag and push the images into the fullstack-final project's image streams.
+
+podman tag backend:latest $REGISTRY/fullstack-final/backend:latest
+podman tag frontend:latest $REGISTRY/fullstack-final/frontend:latest
+
+podman push $REGISTRY/fullstack-final/backend:latest --tls-verify=false
+podman push $REGISTRY/fullstack-final/frontend:latest --tls-verify=false
+
+# Confirm the image streams were created
+oc get imagestream -n fullstack-final
+Deliverable for Subtask 1.2: oc get imagestream -n fullstack-final shows two image streams, backend and frontend, each with at least one tag (latest). This confirms both images were built and pushed successfully.
+
+Task 2: Deploy the Application to OpenShift
+Subtask 2.1: Deploy PostgreSQL with Automated Schema Initialization
+Step 1: Create the database deployment. To avoid a manual initialization step being forgotten, the schema is created automatically using a PostgreSQL init script mounted via ConfigMap, which the official postgres image executes on first startup.
+
+cd ~/fullstack-app
+
+cat > database-deployment.yaml << 'EOF'
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init-script
+data:
+  init.sql: |
+    CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      name VARCHAR(255) NOT NULL,
+      email VARCHAR(255) NOT NULL
+    );
+    INSERT INTO users (name, email)
+    SELECT 'Ada Lovelace', 'ada@example.com'
+    WHERE NOT EXISTS (SELECT 1 FROM users);
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgresql
+  labels:
+    app: postgresql
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgresql
+  template:
+    metadata:
+      labels:
+        app: postgresql
+    spec:
+      containers:
+      - name: postgresql
+        image: postgres:13
+        env:
+        - name: POSTGRES_DB
+          value: "fullstack_db"
+        - name: POSTGRES_USER
+          value: "postgres"
+        - name: POSTGRES_PASSWORD
+          value: "password"
+        ports:
+        - containerPort: 5432
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql/data
+        - name: init-script
+          mountPath: /docker-entrypoint-initdb.d
+      volumes:
+      - name: postgres-storage
+        persistentVolumeClaim:
+          claimName: postgres-pvc
+      - name: init-script
+        configMap:
+          name: postgres-init-script
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgresql
+spec:
+  selector:
+    app: postgresql
+  ports:
+  - port: 5432
+    targetPort: 5432
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+EOF
+
+oc apply -f database-deployment.yaml
+oc rollout status deployment/postgresql
+Step 2: Verify the schema was created. Because postgres:13 only runs files in /docker-entrypoint-initdb.d on a fresh data volume, confirm the table exists before proceeding. If the PVC was reused from a prior run and the table is missing, create it manually as a fallback.
+
+POSTGRES_POD=$(oc get pods -l app=postgresql -o jsonpath='{.items[0].metadata.name}')
+
+# Verify the table exists
+oc exec $POSTGRES_POD -- psql -U postgres -d fullstack_db -c "\dt users"
+
+# Fallback: if the table does not exist, create it manually
+oc exec $POSTGRES_POD -- psql -U postgres -d fullstack_db -c \
+  "CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, name VARCHAR(255), email VARCHAR(255));"
+Deliverable for Subtask 2.1: oc exec $POSTGRES_POD -- psql -U postgres -d fullstack_db -c "\dt users" returns a table listing showing users with schema public. This confirms the database is initialized and ready before the backend attempts any queries against it.
+
+Subtask 2.2: Deploy Backend and Frontend with Networking
+Step 1: Deploy the backend, referencing the image stream built earlier.
+
+REGISTRY=$(oc get route default-route -n openshift-image-registry -o jsonpath='{.spec.host}')
+
+cat > backend-deployment.yaml << EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  labels:
+    app: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+      - name: backend
+        image: image-registry.openshift-image-registry.svc:5000/fullstack-final/backend:latest
+        env:
+        - name: DB_HOST
+          value: "postgresql"
+        - name: DB_PORT
+          value: "5432"
+        - name: DB_NAME
+          value: "fullstack_db"
+        - name: DB_USER
+          value: "postgres"
+        - name: DB_PASSWORD
+          value: "password"
+        - name: PORT
+          value: "3000"
+        ports:
+        - containerPort: 3000
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-service
+spec:
+  selector:
+    app: backend
+  ports:
+  - port: 3000
+    targetPort: 3000
+EOF
+
+oc apply -f backend-deployment.yaml
+oc rollout status deployment/backend
+Step 2: Deploy the frontend and expose it via a Route.
+
+cat > frontend-deployment.yaml << 'EOF'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  labels:
+    app: frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+      - name: frontend
+        image: image-registry.openshift-image-registry.svc:5000/fullstack-final/frontend:latest
+        ports:
+        - containerPort: 8080
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-service
+spec:
+  selector:
+    app: frontend
+  ports:
+  - port: 8080
+    targetPort: 8080
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: frontend-route
+spec:
+  to:
+    kind: Service
+    name: frontend-service
+  port:
+    targetPort: 8080
+EOF
+
+oc apply -f frontend-deployment.yaml
+oc rollout status deployment/frontend
+Deliverable for Subtask 2.2: oc get pods shows 2 backend pods and 2 frontend pods in Running state with READY 1/1. oc get route frontend-route -o jsonpath='{.spec.host}' returns a resolvable hostname. Visiting http://<that-hostname> in a browser displays the "Full Stack OpenShift Application" page with the seeded user "Ada Lovelace" listed.
+
+Task 3: Scale, Test, and Troubleshoot the Deployment
+Subtask 3.1: Configure Autoscaling and Resource Governance
+Step 1: Apply a HorizontalPodAutoscaler for the backend and a ResourceQuota/LimitRange for the project.
+
+cat > backend-hpa.yaml << 'EOF'
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: backend-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: backend
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+EOF
+
+oc apply -f backend-hpa.yaml
+
+cat > resource-governance.yaml << 'EOF'
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: fullstack-quota
+spec:
+  hard:
+    requests.cpu: "2"
+    requests.memory: 4Gi
+    limits.cpu: "4"
+    limits.memory: 8Gi
+    pods: "20"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: fullstack-limits
+spec:
+  limits:
+  - default:
+      cpu: "200m"
+      memory: "256Mi"
+    defaultRequest:
+      cpu: "100m"
+      memory: "128Mi"
+    type: Container
+EOF
+
+oc apply -f resource-governance.yaml
+
+# Confirm both resources are active
+oc get hpa backend-hpa
+oc describe quota fullstack-quota
+Step 2: Verify the metrics pipeline is functioning (required for HPA to compute utilization).
+
+oc adm top pods
+oc adm top nodes
+If oc adm top returns "metrics not available yet," wait 1-2 minutes for the metrics-server to collect the first data points, then retry.
+
+Deliverable for Subtask 3.1: oc get hpa backend-hpa shows MINPODS 2, MAXPODS 6, and a TARGETS column with a CPU percentage (not <unknown>). oc describe quota fullstack-quota shows used/hard values for pods, cpu, and memory reflecting the six running pods (2 backend, 2 frontend, 1 postgresql, plus any load-test pod added later).
+
+Subtask 3.2: Load Test the Application and Troubleshoot Failures
+Step 1: Create and run a load-test script that exercises the frontend route from inside the cluster, then review results.
+
+cd ~/fullstack-app
+
+cat > load-test.sh << 'EOF'
+#!/bin/bash
+# Simple concurrent load test against the frontend service.
+# Usage: ./load-test.sh <target-url> <concurrent-users> <requests-per-user>
+
+TARGET_URL=${1:-http://frontend-service:8080}
+CONCURRENT_USERS=${2:-10}
+REQUESTS_PER_USER=${3:-20}
+
+echo "Load testing $TARGET_URL"
+echo "Concurrent users: $CONCURRENT_USERS"
+echo "Requests per user: $REQUESTS_PER_USER"
+
+run_user() {
+  local user_id=$1
+  local success=0
+  local failure=0
+  for i in $(seq 1 "$REQUESTS_PER_USER"); do
+    if curl -s -o /dev/null -w "%{http_code}" "$TARGET_URL" | grep -q "200"; then
+      success=$((success + 1))
+    else
+      failure=$((failure + 1))
+    fi
+  done
+  echo "User $user_id: $success succeeded, $failure failed"
+}
+
+START_TIME=$(date +%s)
+
+for u in $(seq 1 "$CONCURRENT_USERS"); do
+  run_user "$u" &
+done
+
+wait
+
+END_TIME=$(date +%s)
+TOTAL_TIME=$((END_TIME - START_TIME))
+TOTAL_REQUESTS=$((CONCURRENT_USERS * REQUESTS_PER_USER))
+
+echo "-----------------------------------------"
+echo "Total requests sent: $TOTAL_REQUESTS"
+echo "Total time elapsed: ${TOTAL_TIME}s"
+echo "Approximate throughput: $((TOTAL_REQUESTS / (TOTAL_TIME > 0 ? TOTAL_TIME : 1))) req/s"
+EOF
+
+chmod +x load-test.sh
+
+# Run the load test from a temporary in-cluster pod so it hits the service DNS name
+oc run load-tester --image=curlimages/curl --restart=Never --command -- sleep 3600
+oc wait --for=condition=ready pod/load-tester --timeout=60s
+oc cp load-test.sh load-tester:/tmp/load-test.sh
+oc exec load-tester -- sh /tmp/load-test.sh http://frontend-service:8080 10 20
+Step 2: Observe autoscaling behavior and troubleshoot common failures encountered during the test.
+
+# Watch replica counts change in response to load (run in a separate terminal, Ctrl+C to stop)
+oc get hpa backend-hpa -w
+Common issues you may encounter, and how to resolve them:
+
+Issue 1: Backend pods return 500 errors on /api/users.
+
+BACKEND_POD=$(oc get pods -l app=backend -o jsonpath='{.items[0].metadata.name}')
+oc logs $BACKEND_POD --tail=50
+If the logs show relation "users" does not exist, the database was not initialized. Re-run the fallback command from Subtask 2.1:
+
+POSTGRES_POD=$(oc get pods -l app=postgresql -o jsonpath='{.items[0].metadata.name}')
+oc exec $POSTGRES_POD -- psql -U postgres -d fullstack_db -c \
+  "CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, name VARCHAR(255), email VARCHAR(255));"
+Issue 2: oc exec load-tester reports connection refused.
+
+Check that the frontend service and its endpoints exist:
+
+oc get svc frontend-service
+oc get endpoints frontend-service
+If ENDPOINTS is empty, the frontend pods are not yet ready. Check pod status and events:
+
+oc get pods -l app=frontend
+oc describe pod -l app=frontend
+Issue 3: HPA TARGETS column stays at <unknown>.
+
+This means the metrics-server has not yet reported data for the pods, or resource requests are missing from the Deployment spec. Confirm requests are set:
+
+oc get deployment backend -o jsonpath='{.spec.template.spec.containers[0].resources}'
+If requests are present and metrics are still unavailable after 5 minutes, restart the backend pods to force fresh metrics registration:
+
+oc rollout restart deployment/backend
+Step 3: Clean up the load-testing pod and review final application state.
+
+oc delete pod load-tester
+
+# Final verification of all workloads
+oc get deployments
+oc get pods
+oc get hpa
+oc get route frontend-route
+Deliverable for Subtask 3.2: The load-test.sh output shows a summary line per simulated user (e.g., User 3: 20 succeeded, 0 failed) followed by total requests, elapsed time, and throughput. During the test, oc get hpa backend-hpa -w shows the REPLICAS value increase from 2 toward the observed CPU load, then scale back down after the stabilization window once the test completes. After cleanup, oc get pods shows no load-tester pod and all application pods remain Running.
+
+Expected Outcomes
+A running three-tier application (PostgreSQL, Node.js/Express backend, Nginx frontend) accessible through an OpenShift Route, with a users table correctly initialized and queryable
+A working HorizontalPodAutoscaler that measurably reacts to load generated by a custom load-test script, governed by a ResourceQuota and LimitRange
+Practical experience diagnosing and resolving the three most common OpenShift deployment failures: missing database schema, missing service endpoints, and unavailable HPA metrics
+Conclusion
+In this lab you designed, containerized, and deployed a complete three-tier application on OpenShift, moving from source code and Dockerfiles through image builds, database schema initialization, service networking, and a public Route. You then layered in production concerns by configuring horizontal pod autoscaling, resource quotas, and limit ranges, and validated the whole system under load using a custom concurrent load-testing script while diagnosing real failure modes such as missing tables, empty service endpoints, and stale HPA metrics. These are the same skills exercised on the Red Hat Certified OpenShift Application Developer exam: building and deploying applications, wiring up storage and networking, and troubleshooting a live cluster under pressure. From here, students should explore extending this pipeline with OpenShift Pipelines (Tekton) for automated builds and deployments, adding Prometheus ServiceMonitors and Grafana dashboards for deeper observability, and experimenting with StatefulSets or an operator-managed database for more resilient persistent storage.

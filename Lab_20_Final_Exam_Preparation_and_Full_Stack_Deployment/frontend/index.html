@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Full Stack OpenShift Demo</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        .container { max-width: 800px; margin: 0 auto; }
+        input, button { padding: 10px; margin: 5px; }
+        .user-item { padding: 10px; border: 1px solid #ddd; margin: 5px 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Full Stack OpenShift Application</h1>
+        <div>
+            <h2>Add New User</h2>
+            <input type="text" id="userName" placeholder="Name" />
+            <input type="email" id="userEmail" placeholder="Email" />
+            <button onclick="addUser()">Add User</button>
+        </div>
+        <div>
+            <h2>Users</h2>
+            <div id="usersList"></div>
+        </div>
+    </div>
+    <script>
+        const API_BASE = '/api';
+
+        async function loadUsers() {
+            const response = await fetch(`${API_BASE}/users`);
+            const users = await response.json();
+            document.getElementById('usersList').innerHTML = users.map(u =>
+                `<div class="user-item"><strong>${u.name}</strong> - ${u.email}</div>`
+            ).join('');
+        }
+
+        async function addUser() {
+            const name = document.getElementById('userName').value;
+            const email = document.getElementById('userEmail').value;
+            if (!name || !email) { alert('Please fill in both fields'); return; }
+            const response = await fetch(`${API_BASE}/users`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, email })
+            });
+            if (response.ok) {
+                document.getElementById('userName').value = '';
+                document.getElementById('userEmail').value = '';
+                loadUsers();
+            }
+        }
+
+        loadUsers();
+    </script>
+</body>
+</html>
